@@ -1,143 +1,91 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
   workflow_dispatch:
-  release:
-    types: [published]
 
-env:
-  PROJECT_TYPE: KEXT
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Kext Build
-    runs-on: macos-latest
-    env:
-      JOB_TYPE: BUILD
+    name: Build Intel VoodooI2CHID
+    runs-on: macos-26-intel
+    timeout-minutes: 15
     steps:
-    - name: Checkout VoodooI2C
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-        fetch-depth: 500
-    - name: Checkout MacKernelSDK
-      uses: actions/checkout@v4
-      with:
-        repository: acidanthera/MacKernelSDK
-        path: MacKernelSDK
-    - name: CI Bootstrap
-      run: |
-        src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/ocbuild/master/ci-bootstrap.sh) && eval "$src" || exit 1
-
-    - name: VoodooInput Bootstrap
-      run: |
-        src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/VoodooInput/master/VoodooInput/Scripts/bootstrap.sh) && eval "$src" && mv VoodooInput Dependencies
-
-    - name: Fetch tags
-      run: git fetch --tags --recurse-submodules=no
-
-    - name: Get Commit SHA
-      id: vars
-      run: |
-        echo "sha_short=$(git rev-parse --short=8 ${{ github.sha }})" >> $GITHUB_OUTPUT
-
-    - name: Build Debug VoodooI2C
-      run: xcodebuild -workspace VoodooI2C.xcworkspace -scheme VoodooI2C -derivedDataPath build -jobs 1 -configuration Debug
-    - name: Build Release VoodooI2C
-      run: xcodebuild -workspace VoodooI2C.xcworkspace -scheme VoodooI2C -derivedDataPath build -jobs 1 -configuration Release
-
-    - name: Generate Release Description
-      if: github.event_name == 'release'
-      run: |
-        LAST_TAG=$(git describe --abbrev=0 --tags `git rev-list --tags --skip=1 --max-count=1`)
-        LAST_TEN_COMMITS=$(git log --oneline --pretty=format:"%h - %s (%an)" ${LAST_TAG}..@ -n 10)
-        NEW_LINES=$'\n\n\n'
-        NUM_COMMITS="$(git rev-list ${LAST_TAG}..@ --count)"
-        echo "Since the last release there have been ${NUM_COMMITS} commit(s). The descriptions for the first (at most) 10 of these are as follows${NEW_LINES}${LAST_TEN_COMMITS}" >> ./changelog.md
-
-    - uses: softprops/action-gh-release@v2
-      if: github.event_name == 'release'
-      with:
-        files: build/Build/Products/*/*.zip
-        body_path: ./changelog.md
-
-    - uses: actions/upload-artifact@v4
-      with:
-        name: VoodooI2C-${{ steps.vars.outputs.sha_short }}
-        path: build/Build/Products/*/*.zip
-
-  docs:
-    name: Docs
-    runs-on: macos-latest
-    steps:
-    - name: Checkout VoodooI2C
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-    - name: Checkout MacKernelSDK
-      uses: actions/checkout@v4
-      with:
-        repository: acidanthera/MacKernelSDK
-        path: MacKernelSDK
-    
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    - name: Install python dependencies
-      run: pip3 install -r requirements.txt
-
-    - name: VoodooInput Bootstrap
-      run: |
-        src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/VoodooInput/master/VoodooInput/Scripts/bootstrap.sh) && eval "$src" && mv VoodooInput Dependencies
-    
-    - name: Build Documentation
-      run: ./scripts/build_doc.sh
-
-    - name: Package Documentation
-      run: zip -r Docs.zip ./docs/*
-    - uses: actions/upload-artifact@v4
-      with:
-        name: VoodooI2C-Docs
-        path: Docs.zip
-
-    - name: Upload Docs to Github Pages
-      if: ${{ (github.event_name == 'release') && (github.event.repository.full_name == 'VoodooI2C/VoodooI2C') }}
-      working-directory: ./docs
-      env:
-        DOCUMENTATION_TOKEN: ${{ secrets.DOCUMENTATION_TOKEN }}
-        USERNAME: github-actions[bot]
-      run: |
-        git init .
-        git config user.name "$USERNAME"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add -A
-        git commit -m "${{ github.ref_name}} Documentation"
-        git push -f https://$USERNAME:$DOCUMENTATION_TOKEN@github.com/VoodooI2C/VoodooI2C.github.io.git master
-  
-  lint:
-    name: Lint
-    runs-on: macos-latest
-    steps:
-      - name: Checkout VoodooI2C
-        uses: actions/checkout@v4
+      - name: Checkout VoodooI2C and satellites
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          submodules: 'recursive'
+          persist-credentials: false
+          submodules: recursive
+
       - name: Checkout MacKernelSDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: acidanthera/MacKernelSDK
+          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
           path: MacKernelSDK
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Checkout VoodooInput
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          python-version: '3.12'
-          cache: 'pip'
-      - name: Install python dependencies
-        run: pip3 install -r requirements.txt
-      - name: Run Lint
-        run: ./scripts/run_lint.sh
+          repository: acidanthera/VoodooInput
+          ref: d897813718c2ef9ad143b6a86240fe52dcb1693e
+          path: Dependencies/VoodooInput/Source
+          persist-credentials: false
+
+      - name: Build the VoodooInput SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          xcodebuild -version
+          input_root="$GITHUB_WORKSPACE/Dependencies/VoodooInput"
+          ln -s "$GITHUB_WORKSPACE/MacKernelSDK" "$input_root/Source/MacKernelSDK"
+          for configuration in Debug Release; do
+            xcodebuild -project "$input_root/Source/VoodooInput.xcodeproj" \
+              -target VoodooInput -configuration "$configuration" \
+              CONFIGURATION_BUILD_DIR="$input_root/$configuration" \
+              CODE_SIGNING_ALLOWED=NO
+            test -d "$input_root/$configuration/VoodooInput.kext"
+          done
+          test -f "$input_root/Debug/VoodooInput.kext/Contents/Resources/VoodooInputMultitouch/VoodooInputMessages.h"
+
+      - name: Build the matching I2C-HID satellite
+        shell: bash
+        run: |
+          set -euo pipefail
+          satellite='VoodooI2C Satellites/VoodooI2CHID'
+          test "$(git -C "$satellite" rev-parse HEAD)" = 16f765dab5a364df3106a624be4d2cbf0932dfd6
+          build="$RUNNER_TEMP/voodoo-build"
+          xcodebuild -workspace VoodooI2C.xcworkspace -scheme VoodooI2C \
+            -derivedDataPath "$build" -jobs 1 -configuration Release \
+            CODE_SIGNING_ALLOWED=NO
+          products="$build/Build/Products/Release"
+          bundle="$products/VoodooI2CHID.kext"
+          binary="$bundle/Contents/MacOS/VoodooI2CHID"
+          test -f "$binary"
+          xcrun lipo "$binary" -verify_arch x86_64
+          /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
+          mkdir artifact
+          export COPYFILE_DISABLE=1
+          tar -C "$products" -czf artifact/VoodooI2CHID.tar.gz VoodooI2CHID.kext
+          (cd artifact && shasum -a 256 VoodooI2CHID.tar.gz > SHA256SUMS)
+          {
+            printf 'core_base=%s\n' "$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
+            printf 'build_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'hid_commit=%s\n' "$(git -C "$satellite" rev-parse HEAD)"
+            printf 'mac_kernel_sdk=%s\n' "$(git -C MacKernelSDK rev-parse HEAD)"
+            printf 'voodoo_input_commit=%s\n' "$(git -C Dependencies/VoodooInput/Source rev-parse HEAD)"
+            printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
+            xcodebuild -version
+            xcrun lipo -archs "$binary"
+          } > artifact/provenance.txt
+
+      - name: Upload the verified Intel satellite
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VoodooI2CHID-x86_64
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
